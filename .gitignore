@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.pyo
+*.wav
+*.raw
+*.egg-info/
+.DS_Store

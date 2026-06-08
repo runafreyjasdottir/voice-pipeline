@@ -35,15 +35,31 @@ from faster_whisper import WhisperModel
 # ── Configuration ──────────────────────────────────────────────────
 MIC_SAMPLE_RATE = 48000
 MIC_CHANNELS = 1
-MIC_DEVICE_INDEX = 2         # PyAudio index for onn USB Mic
+MIC_DEVICE_INDEX = int(os.environ.get("MIC_DEVICE_INDEX", "2"))  # PyAudio index for onn USB Mic
 
 MODEL_SIZE = "tiny"
 MODEL_DEVICE = "cpu"
 MODEL_COMPUTE = "int8"
 
+# ── .env loader ─────────────────────────────────────────────────────
+def _load_env():
+    """Load .env file if it exists."""
+    env_path = Path.home() / ".hermes" / ".env"
+    if env_path.exists():
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, _, value = line.partition("=")
+                    key = key.strip()
+                    value = value.strip().strip('"').strip("'")
+                    os.environ.setdefault(key, value)
+
+_load_env()
+
 # Hermes API
-API_URL = "http://localhost:8642/v1/chat/completions"
-API_KEY = "8bc5aef271fc55cfddd05eb521be9a922f2c94993a26821abf36c6405c0680c0"
+API_URL = os.environ.get("HERMES_API_URL", "http://localhost:8642/v1/chat/completions")
+API_KEY = os.environ.get("API_SERVER_KEY", os.environ.get("HERMES_API_KEY", ""))
 API_MODEL = "kimi-k2.6"
 API_MAX_TOKENS = 250
 API_TIMEOUT = 30  # seconds

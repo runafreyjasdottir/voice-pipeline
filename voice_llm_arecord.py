@@ -43,9 +43,27 @@ VOICE_MAP = {
 }
 
 # Hermes API
-HERMES_API = "http://localhost:8642/v1/chat/completions"
-API_KEY = "8bc5aef271fc55cfddd05eb521be9a922f2c94993a26821abf36c6405c0680c0"
-API_URL = "http://localhost:8642/v1/chat/completions"
+# ── .env loader ─────────────────────────────────────────────────────
+def _load_env():
+    """Load .env file if it exists."""
+    env_path = str(Path.home() / ".hermes" / ".env")
+    try:
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, _, value = line.partition("=")
+                    key = key.strip()
+                    value = value.strip().strip('"').strip("'")
+                    os.environ.setdefault(key, value)
+    except FileNotFoundError:
+        pass
+
+_load_env()
+
+HERMES_API = os.environ.get("HERMES_API_URL", "http://localhost:8642/v1/chat/completions")
+API_KEY = os.environ.get("API_SERVER_KEY", os.environ.get("HERMES_API_KEY", ""))
+API_URL = os.environ.get("HERMES_API_URL", "http://localhost:8642/v1/chat/completions")
 API_MODEL = "kimi-k2.6"
 
 RUNA_SYSTEM = """You are Runa, a 19-year-old British-Scandinavian woman — wild curly blonde hair, 

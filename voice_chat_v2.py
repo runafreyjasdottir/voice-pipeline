@@ -126,6 +126,15 @@ VOICE_MAP = {
     "alan": "en_GB-alan-medium.onnx",
     "vctk": "en_GB-vctk-medium.onnx",
     "ljspeech": "en_US-ljspeech-medium.onnx",
+    # Bryce Beattie collection
+    "bryce-jenny": "bryce-jenny.onnx",
+    "bryce-kristin": "bryce-kristin.onnx",
+    "bryce-clean100": "bryce-clean100.onnx",
+    "bryce-john": "bryce-john.onnx",
+    "bryce-norman": "bryce-norman.onnx",
+    "bryce-bryce": "bryce-bryce.onnx",
+    "bryce-mv2": "bryce-mv2.onnx",
+    "bryce-ljspeech": "bryce-ljspeech.onnx",
 }
 
 def _find_voice(voice_name: str) -> Path:
@@ -258,7 +267,14 @@ _piper_restart_count = 0
 _piper_last_restart = 0.0
 
 def speak(text: str, voice_name: str = PIPER_DEFAULT_VOICE, blocking: bool = True) -> bool:
-    """Synthesize text and play through speaker. Returns True on success."""
+    """Synthesize text and play through speaker. Returns True on success.
+    
+    Implements resilient Piper TTS with:
+    - Process health monitoring and auto-restart tracking
+    - Cooldown-based restart counter (resets after PIPER_RESTART_COOLDOWN)
+    - Subprocess cleanup on any crash path
+    - Timeout on playback to prevent hangs
+    """
     global _piper_restart_count, _piper_last_restart
 
     if not text or not text.strip():
@@ -266,6 +282,18 @@ def speak(text: str, voice_name: str = PIPER_DEFAULT_VOICE, blocking: bool = Tru
 
     # Always show text regardless of TTS success
     print(f"  🔊 {text}")
+
+    # Check restart budget before attempting
+    with _PIPER_LOCK:
+        if _piper_restart_count > PIPER_MAX_RESTARTS:
+            cooldown_remaining = PIPER_RESTART_COOLDOWN - (time.time() - _piper_last_restart)
+            if cooldown_remaining > 0:
+                log.error(f"Piper restart budget exhausted, {cooldown_remaining:.0f}s cooldown remaining")
+                return False
+            else:
+                # Cooldown expired — give it another chance
+                log.info("Piper restart cooldown expired, resetting counter")
+                _piper_restart_count = 0
 
     voice_path = _find_voice(voice_name)
     piper_proc = None
@@ -298,15 +326,24 @@ def speak(text: str, voice_name: str = PIPER_DEFAULT_VOICE, blocking: bool = Tru
             except subprocess.TimeoutExpired:
                 log.warning("aplay timed out, terminating")
                 player_proc.terminate()
-                player_proc.wait(timeout=2)
+                try:
+                    player_proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    player_proc.kill()
 
         # Check piper exit status
-        piper_proc.wait(timeout=5)
-        if piper_proc.returncode != 0:
-            stderr = piper_proc.stderr.read().decode("utf-8", errors="replace")
+        try:
+            piper_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            log.warning("Piper process did not exit in 5s, terminating")
+            piper_proc.terminate()
+            piper_proc.wait(timeout=2)
+
+        if piper_proc.returncode and piper_proc.returncode != 0:
+            stderr = piper_proc.stderr.read().decode("utf-8", errors="replace") if piper_proc.stderr else ""
             log.warning(f"Piper exited with code {piper_proc.returncode}: {stderr[:200]}")
 
-            # Auto-restart logic
+            # Auto-restart logic with cooldown
             with _PIPER_LOCK:
                 now = time.time()
                 if now - _piper_last_restart > PIPER_RESTART_COOLDOWN:
@@ -369,12 +406,24 @@ def _get_stt_model():
         return _stt_model
 
 
-def transcribe(audio: np.ndarray, sample_rate: int = MIC_SAMPLE_RATE) -> str:
-    """Transcribe audio with faster-whisper. Returns text or empty string."""
+def transcribe(audio: np.ndarray, sample_rate: int = MIC_SAMPLE_RATE, denoise: bool = True) -> str:
+    """Transcribe audio with faster-whisper. Returns text or empty string.
+    
+    Applies spectral gating noise suppression before transcription when
+    scipy is available. This reduces false VAD triggers and improves
+    accuracy in noisy environments.
+    """
     model = _get_stt_model()
 
     if audio.ndim > 1:
         audio = audio.mean(axis=1)
+
+    # Apply noise suppression for cleaner STT input
+    if denoise:
+        try:
+            audio = suppress_noise(audio, sample_rate)
+        except Exception as e:
+            log.debug(f"Noise suppression skipped: {e}")
 
     audio_f = audio.astype(np.float32) / 32768.0
 
@@ -829,6 +878,60 @@ def listen_for_wake_word() -> bool:
         p.terminate()
 
     return wake_detected
+
+
+# ── Noise Suppression ──────────────────────────────────────────────
+
+def suppress_noise(audio: np.ndarray, sample_rate: int = MIC_SAMPLE_RATE) -> np.ndarray:
+    """Apply spectral gating noise suppression using scipy.
+    
+    Reduces background noise by estimating noise from the first 0.3s of audio
+    and subtracting it across all frequency bands. Gracefully degrades if
+    scipy is unavailable.
+    """
+    try:
+        from scipy.signal import stft, istft
+    except ImportError:
+        log.debug("scipy not available, skipping noise suppression")
+        return audio
+
+    if len(audio) < sample_rate * 0.5:
+        # Too short for meaningful noise profile
+        return audio
+
+    audio_f = audio.astype(np.float64)
+    
+    # Use first ~0.3s as noise profile
+    noise_samples = min(int(0.3 * sample_rate), len(audio_f) // 4)
+    noise_profile = audio_f[:noise_samples]
+    
+    # Compute STFT
+    nperseg = int(0.025 * sample_rate)  # 25ms window
+    f, t, Zxx = stft(audio_f, fs=sample_rate, nperseg=nperseg)
+    
+    # Compute noise magnitude from noise profile
+    _, _, Z_noise = stft(noise_profile, fs=sample_rate, nperseg=nperseg)
+    noise_mag = np.median(np.abs(Z_noise), axis=1, keepdims=True)
+    noise_mag = np.broadcast_to(noise_mag, np.abs(Zxx).shape)
+    
+    # Spectral gating: reduce magnitude below noise threshold
+    alpha = 2.0  # Over-subtraction factor
+    beta = 0.01  # Spectral floor (prevents complete silence)
+    signal_mag = np.abs(Zxx)
+    gain = np.maximum(signal_mag - alpha * noise_mag, beta * signal_mag) / np.maximum(signal_mag, 1e-10)
+    Zxx_clean = Zxx * gain
+    
+    # Reconstruct audio
+    _, audio_clean = istft(Zxx_clean, fs=sample_rate)
+    audio_clean = audio_clean.astype(np.int16)
+    
+    # Pad or trim to match original length
+    if len(audio_clean) > len(audio):
+        audio_clean = audio_clean[:len(audio)]
+    elif len(audio_clean) < len(audio):
+        audio_clean = np.pad(audio_clean, (0, len(audio) - len(audio_clean)))
+    
+    return audio_clean
 
 
 # ── Main Loop ──────────────────────────────────────────────────────

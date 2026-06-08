@@ -127,22 +127,28 @@ python3 voice_chat_v2.py --device 2
 
 ### Bug Fixes
 
-| # | Severity | Description | Fix |
-|---|----------|-------------|-----|
-| 1 | P0 | API key hardcoded in source | Load from env var `API_SERVER_KEY` or `.env` |
-| 2 | P0 | Subprocess orphan on crash | `try/finally` with `terminate()` + `kill()` |
-| 3 | P0 | Piper hang (no timeout) | 30s timeout on `player.wait()` |
-| 4 | P1 | Duplicate `HERMES_API`/`API_URL` | Single `API_URL` config |
-| 5 | P1 | No Silero VAD (installed but unused) | Integrated Silero with energy fallback |
-| 6 | P1 | No API retry on failure | 3 retries with exponential backoff |
-| 7 | P1 | Unbounded conversation history | Capped by message count + character budget |
-| 8 | P1 | Hardcoded Mic device index | Auto-detect with manual override |
-| 9 | P1 | Missing voices in arecord script | Unified voice map with 8 voices |
-| 10 | P2 | Piper stderr swallowed | Capture stderr for debugging |
-| 11 | P2 | No graceful TTS fallback | Continue with text output if TTS fails |
-| 12 | P2 | Inconsistent gain normalization | Always normalize audio before STT |
-| 13 | P2 | SSL_CERT_FILE in kokoro venv | Clear before torch/huggingface calls |
-| 14 | P2 | Wake word false positives | Removed single-syllable words from main list |
+| # | Severity | Description | Fix | Date |
+|---|----------|-------------|-----|------|
+| 1 | P0 | API key hardcoded in legacy scripts | Load from env var `API_SERVER_KEY` or `.env` | 2026-06-07 |
+| 2 | P0 | API key hardcoded in arecord script | Same env var loading as v2 | 2026-06-08 |
+| 3 | P0 | Subprocess orphan on crash | `try/finally` with `terminate()` + `kill()` | 2026-06-07 |
+| 4 | P0 | Piper hang (no timeout) | 30s timeout on `player.wait()` | 2026-06-07 |
+| 5 | P1 | Missing Piper restart budget check | Pre-flight check with cooldown recovery | 2026-06-08 |
+| 6 | P1 | `piper_proc.wait()` timeout not handled | Added `TimeoutExpired` with `terminate()` → `kill()` | 2026-06-08 |
+| 7 | P1 | `player_proc.wait()` zombie after terminate | Added `kill()` fallback on second timeout | 2026-06-08 |
+| 8 | P1 | `piper_proc.stderr.read()` None risk | Guarded with `if piper_proc.stderr else ""` | 2026-06-08 |
+| 9 | P1 | Duplicate `HERMES_API`/`API_URL` | Single `API_URL` config | 2026-06-07 |
+| 10 | P1 | No Silero VAD (installed but unused) | Integrated Silero with energy fallback | 2026-06-07 |
+| 11 | P1 | No API retry on failure | 3 retries with exponential backoff | 2026-06-07 |
+| 12 | P1 | Unbounded conversation history | Capped by message count + character budget | 2026-06-07 |
+| 13 | P1 | Hardcoded Mic device index | Auto-detect with manual override | 2026-06-07 |
+| 14 | P1 | Missing voices in voice map | Unified voice map with 16 voices (was 8) | 2026-06-08 |
+| 15 | P2 | Piper stderr swallowed | Capture stderr for debugging | 2026-06-07 |
+| 16 | P2 | No graceful TTS fallback | Continue with text output if TTS fails | 2026-06-07 |
+| 17 | P2 | Inconsistent gain normalization | Always normalize audio before STT | 2026-06-07 |
+| 18 | P2 | SSL_CERT_FILE in kokoro venv | Clear before torch/huggingface calls | 2026-06-07 |
+| 19 | P2 | Wake word false positives | Removed single-syllable words from main list | 2026-06-07 |
+| 20 | P2 | No noise suppression | Added scipy spectral gating + `suppress_noise()` | 2026-06-08 |
 
 ### Hardening Features
 
